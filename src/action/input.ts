@@ -4,6 +4,7 @@ import {
   ACTION_STATUSES,
   type ActionInputs,
   type BaseDeploymentInput,
+  COMMENT_ONLY_DEPLOYMENT_STATUSES,
   type CommentOnlyDeploymentInput,
   type DeployAndCommentDeploymentInput,
   type DeploymentInput,
@@ -26,6 +27,7 @@ export function readActionInputs(reader: RawInputReader = core): ActionInputs {
     githubToken: reader.getInput("github-token"),
     vercelToken: reader.getInput("vercel-token"),
     mode: reader.getInput("mode") || "deploy-and-comment",
+    deploymentConcurrency: reader.getInput("deployment-concurrency") || "2",
     deployments: reader.getInput("deployments", {
       required: true,
     }),
@@ -43,6 +45,7 @@ export interface RawActionInputs {
   githubToken: string;
   vercelToken?: string;
   mode: string;
+  deploymentConcurrency: string;
   deployments: string;
   header: string;
   footer?: string;
@@ -80,8 +83,14 @@ export function parseActionInputs(raw: RawActionInputs): ActionInputs {
       );
     }
 
+    const deploymentConcurrency = parsePositiveInteger(
+      raw.deploymentConcurrency,
+      "deployment-concurrency",
+    );
+
     return {
       ...commonInputs,
+      deploymentConcurrency,
       vercelToken,
       mode,
       deployments: parseDeployments(raw.deployments, mode),
@@ -225,6 +234,11 @@ function parseCommentOnlyDeploymentInput(
       record.deploymentUrl,
       `deployments[${index}].deploymentUrl`,
     ),
+    status: optionalEnum(
+      record.status,
+      COMMENT_ONLY_DEPLOYMENT_STATUSES,
+      `deployments[${index}].status`,
+    ),
   };
 }
 
@@ -240,6 +254,16 @@ function parseBoolean(value: unknown, field: string): boolean {
   }
 
   throw new InputError(`${field} must be true or false.`);
+}
+
+function parsePositiveInteger(value: unknown, field: string): number {
+  const normalized = requireString(value, field).trim();
+
+  if (!/^[1-9]\d*$/.test(normalized)) {
+    throw new InputError(`${field} must be a positive integer.`);
+  }
+
+  return Number.parseInt(normalized, 10);
 }
 
 function parseCommentMarker(value: string): string {
@@ -260,6 +284,30 @@ function parseEnum<const T extends readonly string[]>(
   field: string,
 ): T[number] {
   const normalized = requireString(value, field).trim();
+  const enumValue = values.find((candidate) => candidate === normalized);
+
+  if (enumValue !== undefined) {
+    return enumValue;
+  }
+
+  throw new InputError(`${field} must be one of: ${values.join(", ")}.`);
+}
+
+function optionalEnum<const T extends readonly string[]>(
+  value: unknown,
+  values: T,
+  field: string,
+): T[number] | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  const normalized = requireString(value, field).trim();
+
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
   const enumValue = values.find((candidate) => candidate === normalized);
 
   if (enumValue !== undefined) {

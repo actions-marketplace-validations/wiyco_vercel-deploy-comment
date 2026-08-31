@@ -4,57 +4,62 @@ This action deploys one or more Vercel projects, or accepts existing deployment 
 
 ## Public API
 
-### Top-level Inputs
+### Inputs
 
 | Input | Required | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `github-token` | No | Workflow `GITHUB_TOKEN` through `github.token` | GitHub token used only for REST API calls against pull request comments. |
 | `vercel-token` | Required for `deploy-and-comment` | None | Vercel token used for isolated CLI execution and Vercel API enrichment. Optional in `comment-only`. |
 | `mode` | No | `deploy-and-comment` | Either `deploy-and-comment` or `comment-only`. |
+| `deployment-concurrency` | No | `2` | Maximum number of `deploy-and-comment` entries to execute at once. |
 | `deployments` | Yes | None | Non-empty JSON array describing one or more project-driven deployment entries. |
 | `header` | No | `Vercel Preview Deployment` | Markdown heading text for the pull request comment. |
 | `footer` | No | None | Optional Markdown appended after the table. |
 | `comment-marker` | No | `default` | Stable marker key used to find and update the managed PR comment. |
-| `status` | No | `success` | Fallback GitHub Actions status when Vercel deployment details are unavailable. |
+| `status` | No | `success` | Fallback GitHub Actions status when `deployments[].status` is unset and Vercel deployment details are unavailable. |
 | `comment-on-failure` | No | `true` | Whether deploy failures still upsert the affected rows before the action fails. |
 
-### `deploy-and-comment` Entries
+The action metadata also defines an internal `job-status` input with a default of `${{ job.status }}` so the JavaScript post cleanup can read the terminal job status.
 
-Required fields:
+#### `deploy-and-comment` Entries
 
-- `cwd: string`
-- `projectId: string`
-- `orgId: string`
-- `environment: string`
-- `projectUrl: string` as an absolute `https://` URL
-
-Optional fields:
-
-- `displayName: string`
-- `teamId: string`
-- `slug: string`
-
-Removed fields:
-
-- `command`
-- `projectName`
+| Field | Required | Description |
+| :--- | :--- | :--- |
+| `cwd` | Yes | `string`. Working directory to copy into an isolated temporary workspace before running the Vercel CLI. |
+| `projectId` | Yes | `string`. Vercel project identifier. |
+| `orgId` | Yes | `string`. Vercel organization identifier written to `.vercel/project.json`. |
+| `environment` | Yes | `string`. Vercel environment passed to `vercel pull --environment`. |
+| `projectUrl` | Yes | Absolute `https://` URL for the Vercel project page shown in the comment. |
+| `deploymentUrl` | No | Absolute `https://` URL for an existing deployment to enrich or render instead of relying only on CLI output. |
+| `displayName` | No | `string`. Preferred project name used before API-derived names. |
+| `teamId` | No | `string`. Optional Vercel team identifier appended to REST API requests. |
+| `slug` | No | `string`. Optional Vercel team slug appended to REST API requests. |
+| `command` | Removed | No longer accepted. The action owns the full `pull -> build -> deploy` lifecycle. |
+| `projectName` | Removed | No longer accepted. Display name is resolved from `displayName`, Vercel metadata, or `projectId`. |
 
 The action owns the full `pull -> build -> deploy` lifecycle. Prebuilt output is no longer expected as an external prerequisite.
 
-### `comment-only` Entries
+#### `comment-only` Entries
 
-Required fields:
+| Field | Required | Description |
+| :--- | :--- | :--- |
+| `projectId` | Yes | `string`. Vercel project identifier. |
+| `environment` | Yes | `string`. Environment label rendered in the comment and used in row identity. |
+| `projectUrl` | Yes | Absolute `https://` URL for the Vercel project page shown in the comment. |
+| `deploymentUrl` | Yes | Absolute `https://` URL for the existing deployment shown in the comment. |
+| `status` | No | One of `ready`, `failed`, `cancelled`, `skipped`, or `in_progress`. When unset, the action falls back to Vercel deployment details or the top-level `status` input. |
+| `displayName` | No | `string`. Preferred project name used before API-derived names. |
+| `teamId` | No | `string`. Optional Vercel team identifier appended to REST API requests. |
+| `slug` | No | `string`. Optional Vercel team slug appended to REST API requests. |
 
-- `projectId: string`
-- `environment: string`
-- `projectUrl: string` as an absolute `https://` URL
-- `deploymentUrl: string` as an absolute `https://` URL
+### Outputs
 
-Optional fields:
-
-- `displayName: string`
-- `teamId: string`
-- `slug: string`
+| Output | Description |
+| :--- | :--- |
+| `comment-id` | ID of the created or updated pull request comment. |
+| `comment-url` | URL of the created or updated pull request comment. |
+| `deployment-urls` | JSON array of preview deployment URLs produced for the current `deployments` input, in input order with rows that resolved a preview URL. This output does not include preserved rows from an existing managed comment. |
+| `statuses` | JSON array of normalized status keys produced for the current `deployments` input, in input order. Current values are `ready`, `failed`, `cancelled`, `skipped`, `in_progress`, and `unknown`. This output does not include preserved rows from an existing managed comment. |
 
 ## Runtime Design
 
@@ -86,7 +91,15 @@ vercel deploy --prebuilt
 5. Build an explicit child-process environment for every Vercel CLI invocation, remove GitHub Actions `INPUT_*` variables, and attach the input token to authenticated CLI invocations through `VERCEL_TOKEN`, not command-line arguments.
 6. Preserve other caller-provided environment variables. This action does not attempt to scrub arbitrary non-`INPUT_*` secrets exported by the workflow.
 
-This design makes same-`cwd`, multi-project and multi-environment deployments safe because local `.vercel` state is not shared between rows.
+> [!NOTE]
+>
+> `deploy-and-comment` entries in one action invocation run in parallel up to `deployment-concurrency` at a time. Before the deploys start, the action performs one managed comment create-or-update with `In Progress` rows for the current input. As each row resolves, one in-process comment writer serializes a full-body update for that row against the same managed comment.
+>
+> The action also registers a JavaScript `post` cleanup that runs when the job is failing or cancelled. If the cleanup finds the managed comment, it updates only unresolved `In Progress` rows for the current `deployments` input whose status link already points at the current workflow run. Already resolved rows, unrelated row keys, and rows from other runs are left unchanged.
+>
+> This design makes same-`cwd`, multi-project and multi-environment deployments safe because local `.vercel` state is not shared between rows.
+>
+> `vercel build --yes` executes inside the workflow runner's temp workspace, not on Vercel's remote build machine. Build success therefore depends on runner CPU and memory capacity together with `deployment-concurrency` and the project build size. On undersized runners, multiple parallel builds can terminate with `SIGKILL` or a generic failed job without a definitive OOM signal.
 
 ### Metadata Resolution
 
@@ -98,14 +111,22 @@ Project display names are resolved in this order:
 4. Vercel deployment details `name`
 5. `projectId`
 
-Preview URL and deployment status are resolved from the deployment URL plus Vercel deployment details when available.
+Preview URLs are resolved from the deployment URL, with Vercel deployment details used to enrich the rendered row when available.
+The `Preview` cell renders `[Preview](...)` only when the row status is `ready` and a preview URL exists. All other rows render `N/A`.
+
+Deployment statuses are resolved in this order:
+
+1. Explicit `comment-only` `deployments[].status`
+2. Vercel deployment details `readyState`
+3. Top-level fallback input `status`
 
 ### External API Usage
 
-GitHub REST API:
+GitHub API:
 
-- `GET /user` to resolve the authenticated login used to identify the managed comment. See [Get the authenticated user](https://docs.github.com/en/rest/users/users#get-the-authenticated-user).
+- `POST /graphql` with `viewer { login }` to resolve the authenticated login used to identify the managed comment. See [Authenticating as a GitHub App installation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
 - `GET /repos/{owner}/{repo}/issues/{issue_number}/comments` to scan pull request conversation comments for the existing managed comment. See [List issue comments](https://docs.github.com/en/rest/issues/comments#list-issue-comments).
+- `GET /repos/{owner}/{repo}/issues/comments/{comment_id}` for best-effort recovery reads after failed managed-comment updates. This is not part of the steady-state per-row publish path. See [Get an issue comment](https://docs.github.com/en/rest/issues/comments#get-an-issue-comment).
 - `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` to create the managed pull request comment. See [Create an issue comment](https://docs.github.com/en/rest/issues/comments#create-an-issue-comment).
 - `PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}` to update the managed pull request comment. See [Update an issue comment](https://docs.github.com/en/rest/issues/comments#update-an-issue-comment).
 
@@ -150,13 +171,16 @@ When updating the PR comment, the action:
 
 1. Finds the existing managed comment through the full-comment marker and authenticated GitHub user.
 2. Parses existing row markers and row contents from that comment.
-3. Replaces or inserts only the rows named in the current `deployments` input.
-4. Preserves unrelated existing rows from the fetched comment snapshot.
-5. Re-renders the entire comment body in one PATCH request.
+3. Writes one `In Progress` snapshot for the current `deployments` input before any deploy work starts.
+4. Keeps the fetched row snapshot in memory for the rest of the run and replaces or inserts only the rows named in the current `deployments` input.
+5. Preserves unrelated existing rows from the startup snapshot.
+6. Re-renders the entire managed comment body for each queued row update without re-reading the full comment before every row.
+7. On failed or cancelled job cleanup, re-reads the managed comment and replaces any current-run `In Progress` rows for the current `deployments` input with the terminal job status.
 
 ### Concurrency
 
-- The managed comment update flow is a single read-modify-write cycle against the full comment body.
+- Parallel deployment entries inside one action invocation are safe because each row uses an isolated temp workspace, execution is bounded by `deployment-concurrency`, and one in-process writer serializes all managed-comment mutations for that run.
+- Managed-comment writes are spaced by at least one second between mutative GitHub requests and queued in FIFO order so closely finishing rows produce a monotonic merged comment body.
 - Concurrent jobs or workflow runs that share the same `comment-marker` are not safe. Two writers can both merge against stale snapshots, and the later PATCH can overwrite rows added by the earlier PATCH.
 - This action does not provide optimistic locking for comment updates. If multiple jobs need to contribute to one shared comment, serialize updates for that `comment-marker`, for example with `needs`, workflow or job `concurrency`, or a final aggregator job.
 
@@ -189,7 +213,7 @@ The `Status` cell renders an emoji followed by the linked label, such as `✅ [R
 
 ## Status Mapping
 
-Vercel `readyState` is preferred when available. Otherwise the fallback GitHub Actions status is used.
+Explicit `comment-only` `deployments[].status` is preferred when set. Otherwise Vercel `readyState` is preferred when available. Otherwise the fallback GitHub Actions status is used.
 
 | Source value | Display |
 | :--- | :--- |
@@ -202,9 +226,11 @@ Vercel `readyState` is preferred when available. Otherwise the fallback GitHub A
 
 ## Failure Behavior
 
-- If `pull`, `build`, or `deploy` fails and `comment-on-failure` is `true`, the action still upserts the affected row with failure status, then fails the action.
-- If `comment-on-failure` is `false`, the action fails immediately without updating the comment.
+- If `pull`, `build`, or `deploy` fails and `comment-on-failure` is `true`, the action still publishes the affected row with failure status, flushes queued row writes, then fails the action.
+- If `comment-on-failure` is `false`, the action restores only the failed row to its startup snapshot state, or removes that row if it did not exist before the run. Other already-published row updates remain in the managed comment.
+- If a managed-comment write ultimately fails after retries, the action fails and leaves the last successfully published managed-comment body in place. It does not delete or restore the whole comment.
 - Vercel API enrichment failures do not block comment updates.
+- If the job fails or is cancelled after the action has written `In Progress` rows, the post-execution cleanup best-effort updates unresolved current-run rows to `Failed` or `Cancelled` from `${{ job.status }}`. Cleanup failures are logged as warnings so they do not mask the original job result.
 
 ## Security Requirements
 
@@ -225,10 +251,10 @@ For the default GitHub token:
 ```yaml
 permissions:
   contents: read
-  issues: write
+  issues: write # or pull-requests: write
 ```
 
-`issues: write` is required because pull request conversation comments are written through GitHub's Issue comments REST API. See [External API Usage](#external-api-usage) for the exact endpoints. `pull-requests: write` is also acceptable.
+`issues: write` or `pull-requests: write` is required because pull request conversation comments are written through GitHub's Issue comments REST API, and that API accepts either permission set. See [External API Usage](#external-api-usage) for the exact endpoints.
 
 ## Acceptance Criteria
 
@@ -236,6 +262,9 @@ permissions:
 - Later runs with the same `comment-marker` update that comment.
 - Serialized jobs and workflow runs with the same `comment-marker` can add or replace independent rows in that same comment.
 - Same-`cwd` multi-project deployments do not share `.vercel/project.json`.
+- `deploy-and-comment` execution does not start more than `deployment-concurrency` rows at once.
+- `deploy-and-comment` writes `In Progress` rows before starting work and publishes resolved row updates incrementally as rows finish.
+- Failed or cancelled jobs finalize unresolved `In Progress` rows through the post-execution cleanup.
 - Custom environments trigger the `Environment` column for all rows.
 - Deploy failures can still update the comment when `comment-on-failure` is `true`.
-- The implementation passes typecheck, lint, tests, and build.
+- The implementation passes typecheck, lint, tests, code coverage, and build.

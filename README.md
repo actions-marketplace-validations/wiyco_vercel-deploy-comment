@@ -5,16 +5,6 @@
 
 Deploy one or more Vercel projects and environments from GitHub Actions and keep a single pull request comment updated.
 
-This action is project-driven:
-
-- `deploy-and-comment` takes `cwd`, `projectId`, `orgId`, `environment`, and `projectUrl`.
-- `comment-only` takes `projectId`, `environment`, `projectUrl`, and `deploymentUrl`.
-- Each row is keyed by `projectId + environment`, so serialized updates with one shared `comment-marker` can replace targeted rows while preserving unrelated rows.
-
-> [!IMPORTANT]
->
-> `projectUrl` and `deploymentUrl` must be absolute `https://` URLs.
-
 The rendered comment looks like this:
 
 | Project | Environment | Status | Preview | Updated (UTC) |
@@ -24,6 +14,9 @@ The rendered comment looks like this:
 
 The `Environment` column is shown only when at least one row uses a custom environment outside `preview`, `production`, or `development`.
 Status cells render an emoji plus the linked status label, for example `✅ [Ready](https://github.com/my-org/my-repo/actions/runs/1234567890)`.
+The `Preview` cell displays a link only when a deployment is `Ready` and has a preview URL. Otherwise, it shows `N/A`.
+
+This action is project-driven.
 
 ## Usage
 
@@ -80,11 +73,14 @@ jobs:
 `deploy-and-comment` requires the Vercel CLI to already be installed and available on `PATH` as `vercel`. This action shells out to the CLI and does not bundle it. `comment-only` does not require the CLI.
 
 > [!IMPORTANT]
+>
 > Jobs or workflow runs that share the same `comment-marker` should update the managed comment serially. Parallel writers are last-writer-wins and can drop rows. See [docs/spec.md#concurrency](docs/spec.md#concurrency).
 
 > [!CAUTION]
 >
-> Pass Vercel credentials through `vercel-token`. This action strips GitHub Actions `INPUT_*` variables from Vercel CLI child processes and injects the token into authenticated steps through `VERCEL_TOKEN`, but it does not remove unrelated secrets that your workflow exports through other environment variables. Do not embed tokens in deployment JSON or other workflow commands.
+> Pass Vercel credentials through `vercel-token`. This action strips GitHub Actions `INPUT_*` variables from Vercel CLI child processes and injects the token into authenticated steps through `VERCEL_TOKEN`, so action input secrets do not appear in command-line arguments.
+>
+> Other workflow-managed secrets exported through non-`INPUT_*` environment variables still remain visible to `vercel build`. Do not embed tokens in deployment JSON or other workflow commands.
 
 For each `deploy-and-comment` entry, the action:
 
@@ -94,44 +90,95 @@ For each `deploy-and-comment` entry, the action:
 4. Runs `vercel build --yes`.
 5. Runs `vercel deploy --prebuilt`.
 
-This avoids sharing repo-local `.vercel` state across multiple projects or environments, including multiple rows that point at the same source `cwd`.
-The action strips GitHub Actions `INPUT_*` variables from all Vercel CLI child processes and passes `vercel-token` to authenticated steps through `VERCEL_TOKEN`, so action input secrets do not appear in command-line arguments or in the local build step's environment. Other workflow-managed secrets still remain visible to `vercel build` if the workflow exports them through non-`INPUT_*` environment variables.
+> [!NOTE]
+>
+> Multiple `deploy-and-comment` entries within one action invocation run in parallel up to `deployment-concurrency` at a time. Before the deploys start, the managed PR comment is upserted with `In Progress` rows for the current input. As each row resolves, a single in-process writer serializes the managed comment updates for that run and publishes the latest row state.
+>
+> If the job fails or is cancelled while current-run rows are still `In Progress`, a post cleanup marks only those current deployment rows as `Failed` or `Cancelled`.
+>
+> Each row uses an isolated temp workspace, so repo-local `.vercel` state is not shared across projects or environments, including multiple rows that point at the same source `cwd`.
+
+> [!WARNING]
+>
+> `vercel build` runs inside the workflow runner before `vercel deploy --prebuilt` uploads the prebuilt output, so deploy stability depends on the runner's available CPU and memory as well as `deployment-concurrency`. On smaller runners, running multiple builds in parallel can end with `SIGKILL` or a generic failed build even when the project configuration is unchanged. Reduce `deployment-concurrency` or use a larger runner when builds are resource-heavy.
 
 ## Inputs
 
 Top-level inputs:
 
-- `github-token`: GitHub token for PR comment APIs. Defaults to `github.token`.
-- `vercel-token`: Vercel token for CLI execution and API enrichment. Required in `deploy-and-comment`.
-- `mode`: `deploy-and-comment` or `comment-only`. Default is `deploy-and-comment`.
-- `deployments`: Non-empty JSON array of deployment entries.
-- `header`: Markdown heading text. Default is `Vercel Preview Deployment`.
-- `footer`: Optional Markdown appended below the table.
-- `comment-marker`: Stable key for the managed PR comment. Default is `default`.
-- `status`: Fallback action status when Vercel deployment details are unavailable. Default is `success`.
-- `comment-on-failure`: When `true`, failed deploy rows are still upserted before the action fails. Default is `true`.
+| Input | Required | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `github-token` | No | GitHub token for PR comment APIs. | `github.token` |
+| `vercel-token` | `deploy-and-comment` only | Vercel token for CLI execution and API enrichment. | - |
+| `mode` | No | Selects `deploy-and-comment` or `comment-only`. | `deploy-and-comment` |
+| `deployment-concurrency` | No | Maximum number of `deploy-and-comment` entries to execute at once. | `2` |
+| `deployments` | Yes | Non-empty JSON array of deployment entries. | - |
+| `header` | No | Markdown heading text shown above the table. | `Vercel Preview Deployment` |
+| `footer` | No | Optional Markdown appended below the table. | - |
+| `comment-marker` | No | Stable key for the managed PR comment. | `default` |
+| `status` | No | Fallback action status when Vercel deployment details are unavailable. In `comment-only` mode, `deployments[].status` overrides this value per row. | `success` |
+| `comment-on-failure` | No | When `true`, failed deploy rows replace the temporary `In Progress` rows before the action fails. | `true` |
 
 `deploy-and-comment` entries:
 
-- Required: `cwd`, `projectId`, `orgId`, `environment`, `projectUrl`
-- Optional: `displayName`, `teamId`, `slug`
+| Field | Required | Description |
+| :--- | :--- | :--- |
+| `cwd` | Yes | Working directory copied into the isolated temporary workspace before running the Vercel CLI. |
+| `projectId` | Yes | Vercel project ID used for project API lookup. |
+| `orgId` | Yes | Vercel organization ID written into `.vercel/project.json`. |
+| `environment` | Yes | Vercel deployment environment passed to `vercel pull`. |
+| `projectUrl` | Yes | Absolute `https://` URL for the Vercel project. |
+| `deploymentUrl` | No | Optional absolute `https://` URL used as a preview URL hint or fallback when resolving deployment metadata. |
+| `displayName` | No | Display override for the project name shown in the PR comment. |
+| `teamId` | No | Optional Vercel team ID used for API enrichment. |
+| `slug` | No | Optional Vercel team or account slug used for API enrichment. |
 
 `comment-only` entries:
 
-- Required: `projectId`, `environment`, `projectUrl`, `deploymentUrl`
-- Optional: `displayName`, `teamId`, `slug`
+| Field | Required | Description |
+| :--- | :--- | :--- |
+| `projectId` | Yes | Vercel project ID used for project API lookup. |
+| `environment` | Yes | Deployment environment rendered in the PR comment. |
+| `projectUrl` | Yes | Absolute `https://` URL for the Vercel project. |
+| `deploymentUrl` | Yes | Absolute `https://` URL for the deployment preview. |
+| `status` | No | Explicit row status for `comment-only`. Allowed values: `ready`, `failed`, `cancelled`, `skipped`, `in_progress`. When set, it overrides Vercel status enrichment and the top-level fallback `status`. |
+| `displayName` | No | Display override for the project name shown in the PR comment. |
+| `teamId` | No | Optional Vercel team ID used for API enrichment. |
+| `slug` | No | Optional Vercel team or account slug used for API enrichment. |
 
-`projectUrl` and `deploymentUrl` must be absolute `https://` URLs. `http://` links are rejected so untrusted workflow input cannot render insecure or phishing-oriented links into the managed PR comment.
-
-`projectId` is the Vercel project ID used for project API lookup.
+> [!TIP]
+>
+> `projectUrl` and `deploymentUrl` must be absolute `https://` URLs. `http://` links are rejected so untrusted workflow input cannot render insecure or phishing-oriented links into the managed PR comment.
+>
+> `projectId` is the Vercel project ID used for project API lookup.
 `displayName` is only a display override. The action otherwise prefers the Vercel project API name, then deployment metadata, then `projectId`.
 
-Legacy `deployments[].command` and `deployments[].projectName` are no longer supported.
+> Legacy `deployments[].command` and `deployments[].projectName` are no longer supported.
 
 ## Comment-only Mode
 
+Use this form when you already know the `deploymentUrl` and final `status` and do not need Vercel API enrichment:
+
 ```yaml
-- uses: wiyco/vercel-deploy-comment@2
+- uses: wiyco/vercel-deploy-comment@v2
+  with:
+    mode: comment-only
+    deployments: |
+      [
+        {
+          "projectId": "prj_web",
+          "environment": "preview",
+          "projectUrl": "https://vercel.com/my-team/web",
+          "deploymentUrl": "https://web-git-feature-my-team.vercel.app",
+          "status": "ready"
+        }
+      ]
+```
+
+Pass `vercel-token` in `comment-only` mode when you want Vercel API enrichment for the project name or deployment status:
+
+```yaml
+- uses: wiyco/vercel-deploy-comment@v2
   with:
     mode: comment-only
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -146,11 +193,20 @@ Legacy `deployments[].command` and `deployments[].projectName` are no longer sup
       ]
 ```
 
+## Outputs
+
+| Output | Description |
+| :--- | :--- |
+| `comment-id` | ID of the created or updated pull request comment. |
+| `comment-url` | URL of the created or updated pull request comment. |
+| `deployment-urls` | JSON array of preview deployment URLs produced for the current `deployments` input, in input order with rows that resolved a preview URL. |
+| `statuses` | JSON array of normalized status keys produced for the current `deployments` input, in input order. Current values are `ready`, `failed`, `cancelled`, `skipped`, `in_progress`, and `unknown`. |
+
 ## Notes
 
 - The action stores one hidden comment marker for the whole comment and one hidden marker per row. Row updates are scoped to `projectId + environment`.
 - Rows included in the current `deployments` input are rendered in input order. Existing rows not included in the current run stay in the comment.
 - The exact GitHub and Vercel APIs used by the action are documented in [docs/spec.md#external-api-usage](docs/spec.md#external-api-usage).
-- `issues: write` is required for the managed pull request comment. See [docs/spec.md#required-workflow-permissions](docs/spec.md#required-workflow-permissions).
+- `issues: write` or `pull-requests: write` is required for the managed pull request comment. See [docs/spec.md#required-workflow-permissions](docs/spec.md#required-workflow-permissions).
 
 For the full behavior and security model, see [docs/spec.md](docs/spec.md).

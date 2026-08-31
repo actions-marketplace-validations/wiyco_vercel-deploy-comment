@@ -1,82 +1,99 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const setSecret = vi.fn();
-const warning = vi.fn();
-
-const readActionInputs = vi.fn();
-const buildRunUrl = vi.fn(
-  () => "https://github.test/acme/repo/actions/runs/123",
+const setFailed = vi.fn();
+const getInput = vi.fn();
+const getState = vi.fn();
+const saveState = vi.fn();
+const runActionMain = vi.fn();
+const runActionPost = vi.fn();
+const toError = vi.fn((error: unknown) =>
+  error instanceof Error ? error : new Error(String(error)),
 );
-const readGitHubRuntimeContext = vi.fn(() => ({
-  apiUrl: "https://api.github.test",
-  serverUrl: "https://github.test",
-  owner: "acme",
-  repo: "repo",
-  runId: "123",
-  issueNumber: 42,
-}));
-const runVercelDeploy = vi.fn();
 
 vi.mock("@actions/core", () => ({
-  info: vi.fn(),
-  setFailed: vi.fn(),
-  setOutput: vi.fn(),
-  setSecret,
-  warning,
+  getInput,
+  getState,
+  saveState,
+  setFailed,
 }));
 
-vi.mock("../src/action/input", () => ({
-  readActionInputs,
+vi.mock("../src/action/run", () => ({
+  runActionMain,
+  runActionPost,
 }));
 
-vi.mock("../src/github/client", () => ({
-  GitHubClient: class {},
-  buildRunUrl,
-  readGitHubRuntimeContext,
-}));
-
-vi.mock("../src/vercel/deployment", () => ({
-  getVercelDeploymentDetails: vi.fn(),
-  getVercelProjectDetails: vi.fn(),
-  runVercelDeploy,
-  toHttpUrl: vi.fn(),
+vi.mock("../src/action/runtime", () => ({
+  toError,
 }));
 
 describe("run", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    readActionInputs.mockReturnValue({
-      githubToken: "ghs_token",
-      vercelToken: "vercel_token",
-      mode: "deploy-and-comment",
-      deployments: [
-        {
-          cwd: ".",
-          environment: "preview",
-          orgId: "team_123",
-          projectId: "prj_web",
-          projectUrl: "https://vercel.com/team/web",
-        },
-      ],
-      header: "Preview",
-      footer: undefined,
-      commentMarker: "default",
-      status: "success",
-      commentOnFailure: false,
-    });
+    getInput.mockReturnValue("");
+    getState.mockReturnValue("");
+    runActionMain.mockResolvedValue(undefined);
+    runActionPost.mockResolvedValue(undefined);
+    toError.mockImplementation((error: unknown) =>
+      error instanceof Error ? error : new Error(String(error)),
+    );
   });
 
-  it("rethrows terminal failures with secrets redacted", async () => {
-    runVercelDeploy.mockRejectedValue(
-      new Error("deploy failed with ghs_token and vercel_token"),
-    );
-
+  it("delegates to runActionMain", async () => {
     const { run } = await import("../src/main");
 
-    await expect(run()).rejects.toThrow("deploy failed with *** and ***");
-    expect(warning).toHaveBeenCalledWith("deploy failed with *** and ***");
-    expect(setSecret).toHaveBeenNthCalledWith(1, "ghs_token");
-    expect(setSecret).toHaveBeenNthCalledWith(2, "vercel_token");
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(runActionMain).toHaveBeenCalledTimes(1);
+    expect(runActionPost).not.toHaveBeenCalled();
+    expect(saveState).toHaveBeenCalledWith(
+      "vercelDeployCommentPostCleanupRegistered",
+      "true",
+    );
+    expect(saveState).toHaveBeenCalledWith(
+      "vercelDeployCommentMainOutcome",
+      "started",
+    );
+    expect(saveState).toHaveBeenCalledWith(
+      "vercelDeployCommentMainOutcome",
+      "success",
+    );
+  });
+
+  it("rethrows runActionMain failures unchanged", async () => {
+    runActionMain.mockRejectedValue(new Error("deploy failed"));
+    const { run } = await import("../src/main");
+
+    await expect(run()).rejects.toThrow("deploy failed");
+
+    expect(saveState).toHaveBeenCalledWith(
+      "vercelDeployCommentMainOutcome",
+      "failure",
+    );
+    expect(setFailed).not.toHaveBeenCalled();
+  });
+
+  it("delegates to runActionPost during post execution", async () => {
+    getState.mockImplementation((name: string) => {
+      if (name === "vercelDeployCommentPostCleanupRegistered") {
+        return "true";
+      }
+
+      if (name === "vercelDeployCommentMainOutcome") {
+        return "failure";
+      }
+
+      return "";
+    });
+    const { run } = await import("../src/main");
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(runActionMain).not.toHaveBeenCalled();
+    expect(getInput).toHaveBeenCalledWith("job-status");
+    expect(runActionPost).toHaveBeenCalledWith({
+      jobStatus: "",
+      mainOutcome: "failure",
+    });
   });
 });

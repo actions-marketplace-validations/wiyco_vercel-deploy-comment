@@ -14,6 +14,7 @@ import type { FetchLike } from "../../src/shared/types";
 
 const context: GitHubRuntimeContext = {
   apiUrl: "https://api.github.test",
+  graphqlUrl: "https://api.github.test/graphql",
   serverUrl: "https://github.test",
   owner: "acme",
   repo: "repo",
@@ -29,6 +30,7 @@ describe("readGitHubRuntimeContext", () => {
         GITHUB_EVENT_PATH: "/tmp/event.json",
         GITHUB_RUN_ID: "123",
         GITHUB_API_URL: "https://api.github.test",
+        GITHUB_GRAPHQL_URL: "https://graphql.github.test",
         GITHUB_SERVER_URL: "https://github.test",
       },
       () =>
@@ -38,8 +40,10 @@ describe("readGitHubRuntimeContext", () => {
           },
         }),
     );
-
-    expect(runtimeContext).toEqual(context);
+    expect(runtimeContext).toEqual({
+      ...context,
+      graphqlUrl: "https://graphql.github.test",
+    });
     expect(buildRunUrl(runtimeContext)).toBe(
       "https://github.test/acme/repo/actions/runs/123",
     );
@@ -68,12 +72,55 @@ describe("readGitHubRuntimeContext", () => {
 
     expect(runtimeContext).toEqual({
       apiUrl: "https://api.github.com",
+      graphqlUrl: "https://api.github.com/graphql",
       serverUrl: "https://github.com",
       owner: "acme",
       repo: "repo",
       runId: "456",
       issueNumber: 7,
     });
+  });
+
+  it("derives the GraphQL URL from GitHub Enterprise Server REST URLs", () => {
+    const runtimeContext = readGitHubRuntimeContext(
+      {
+        GITHUB_REPOSITORY: "acme/repo",
+        GITHUB_EVENT_PATH: "/tmp/event.json",
+        GITHUB_RUN_ID: "123",
+        GITHUB_API_URL: "https://github.example/api/v3",
+      },
+      () =>
+        JSON.stringify({
+          pull_request: {
+            number: 42,
+          },
+        }),
+    );
+
+    expect(runtimeContext.graphqlUrl).toBe(
+      "https://github.example/api/graphql",
+    );
+  });
+
+  it("derives the GraphQL URL from non-root REST API paths", () => {
+    const runtimeContext = readGitHubRuntimeContext(
+      {
+        GITHUB_REPOSITORY: "acme/repo",
+        GITHUB_EVENT_PATH: "/tmp/event.json",
+        GITHUB_RUN_ID: "123",
+        GITHUB_API_URL: "https://github.example/custom/rest",
+      },
+      () =>
+        JSON.stringify({
+          pull_request: {
+            number: 42,
+          },
+        }),
+    );
+
+    expect(runtimeContext.graphqlUrl).toBe(
+      "https://github.example/custom/rest/graphql",
+    );
   });
 
   it.each([
@@ -159,9 +206,7 @@ describe("GitHubClient", () => {
       init?: RequestInit;
     }> = [];
     const fetchImplementation = responseQueue(calls, [
-      {
-        login: "github-actions[bot]",
-      },
+      viewerLoginPayload("github-actions[bot]"),
       [
         {
           id: 10,
@@ -195,9 +240,7 @@ describe("GitHubClient", () => {
       init?: RequestInit;
     }> = [];
     const fetchImplementation = responseQueue(calls, [
-      {
-        login: "github-actions[bot]",
-      },
+      viewerLoginPayload("github-actions[bot]"),
       [
         {
           id: 10,
@@ -225,15 +268,132 @@ describe("GitHubClient", () => {
     expect(calls[2]?.url.pathname).toBe("/repos/acme/repo/issues/42/comments");
   });
 
+  it("deletes a pull request comment", async () => {
+    const calls: Array<{
+      url: URL;
+      init?: RequestInit;
+    }> = [];
+    const client = new GitHubClient(
+      "ghs_token",
+      context,
+      async (input, init) => {
+        const url = input instanceof URL ? input : new URL(input);
+        calls.push({
+          url,
+          init,
+        });
+
+        return new Response(null, {
+          status: 204,
+        });
+      },
+    );
+
+    await expect(client.deletePullRequestComment(10)).resolves.toBeUndefined();
+
+    expect(calls[0]?.init?.method).toBe("DELETE");
+    expect(calls[0]?.url.pathname).toBe("/repos/acme/repo/issues/comments/10");
+  });
+
+  it("fetches a pull request comment by id", async () => {
+    const calls: Array<{
+      url: URL;
+      init?: RequestInit;
+    }> = [];
+    const client = new GitHubClient(
+      "ghs_token",
+      context,
+      responseQueue(calls, [
+        {
+          body: "latest body",
+          html_url: "https://github.test/acme/repo/pull/42#issuecomment-10",
+          id: 10,
+        },
+      ]),
+    );
+
+    await expect(client.getPullRequestComment(10)).resolves.toMatchObject({
+      body: "latest body",
+      id: 10,
+    });
+
+    expect(calls[0]?.init?.method).toBeUndefined();
+    expect(calls[0]?.url.pathname).toBe("/repos/acme/repo/issues/comments/10");
+  });
+
+  it("rejects delete responses that return 205 instead of 204", async () => {
+    const client = new GitHubClient(
+      "ghs_token",
+      context,
+      async () =>
+        new Response(null, {
+          status: 205,
+          statusText: "Reset Content",
+        }),
+    );
+
+    await expect(client.deletePullRequestComment(10)).rejects.toThrow(
+      "GitHub API request expected status 204 No Content, but received 205 Reset Content.",
+    );
+  });
+
+  it("rejects delete responses that return 200 instead of 204", async () => {
+    const client = new GitHubClient(
+      "ghs_token",
+      context,
+      async () =>
+        new Response(" \n\t ", {
+          status: 200,
+          statusText: "OK",
+        }),
+    );
+
+    await expect(client.deletePullRequestComment(10)).rejects.toThrow(
+      "GitHub API request expected status 204 No Content, but received 200 OK.",
+    );
+  });
+
+  it("surfaces failed delete requests as GitHub API errors", async () => {
+    const client = new GitHubClient(
+      "ghs_token",
+      context,
+      async () =>
+        new Response("boom", {
+          status: 500,
+          statusText: "Internal Server Error",
+        }),
+    );
+
+    await expect(client.deletePullRequestComment(10)).rejects.toBeInstanceOf(
+      GitHubApiError,
+    );
+    await expect(client.deletePullRequestComment(10)).rejects.toThrow(
+      "GitHub API request failed with status 500 Internal Server Error.",
+    );
+  });
+
+  it("rejects empty JSON responses for non-void requests", async () => {
+    const client = new GitHubClient(
+      "ghs_token",
+      context,
+      async () =>
+        new Response(null, {
+          status: 200,
+        }),
+    );
+
+    await expect(client.createPullRequestComment("new body")).rejects.toThrow(
+      "GitHub API response body was empty.",
+    );
+  });
+
   it("does not match comments whose marker only shares a prefix", async () => {
     const calls: Array<{
       url: URL;
       init?: RequestInit;
     }> = [];
     const fetchImplementation = responseQueue(calls, [
-      {
-        login: "github-actions[bot]",
-      },
+      viewerLoginPayload("github-actions[bot]"),
       [
         {
           id: 10,
@@ -280,9 +440,7 @@ describe("GitHubClient", () => {
       },
     }));
     const fetchImplementation = responseQueue(calls, [
-      {
-        login: "github-actions[bot]",
-      },
+      viewerLoginPayload("github-actions[bot]"),
       firstPage,
     ]);
     const client = new GitHubClient("ghs_token", context, fetchImplementation);
@@ -313,9 +471,7 @@ describe("GitHubClient", () => {
       },
     }));
     const fetchImplementation = responseQueue(calls, [
-      {
-        login: "github-actions[bot]",
-      },
+      viewerLoginPayload("github-actions[bot]"),
       firstPage,
       [
         {
@@ -383,15 +539,14 @@ describe("GitHubClient", () => {
       init?: RequestInit;
     }> = [];
     const fetchImplementation = responseQueue(calls, [
-      {
-        login: "github-actions[bot]",
-      },
+      viewerLoginPayload("github-actions[bot]"),
     ]);
     const client = new GitHubClient(
       "ghs_token",
       {
         ...context,
         apiUrl: "https://github.example/api/v3",
+        graphqlUrl: "https://github.example/api/graphql",
       },
       fetchImplementation,
     );
@@ -400,7 +555,70 @@ describe("GitHubClient", () => {
       "github-actions[bot]",
     );
 
-    expect(calls[0]?.url.href).toBe("https://github.example/api/v3/user");
+    expect(calls[0]?.url.href).toBe("https://github.example/api/graphql");
+    expect(calls[0]?.init?.method).toBe("POST");
+  });
+
+  it("surfaces GitHub GraphQL errors", async () => {
+    const client = new GitHubClient(
+      "ghs_token",
+      context,
+      responseQueue(
+        [],
+        [
+          {
+            errors: [
+              {},
+              {
+                message: "viewer lookup failed",
+              },
+            ],
+          },
+        ],
+      ),
+    );
+
+    await expect(
+      client.graphqlRequest("query ViewerLogin { viewer { login } }"),
+    ).rejects.toThrow("GitHub GraphQL request failed.; viewer lookup failed");
+  });
+
+  it("rejects GraphQL responses without data", async () => {
+    const client = new GitHubClient(
+      "ghs_token",
+      context,
+      responseQueue(
+        [],
+        [
+          {},
+        ],
+      ),
+    );
+
+    await expect(
+      client.graphqlRequest("query ViewerLogin { viewer { login } }"),
+    ).rejects.toThrow("GitHub GraphQL response did not include data.");
+  });
+
+  it("rejects authenticated login lookups without viewer.login", async () => {
+    const client = new GitHubClient(
+      "ghs_token",
+      context,
+      responseQueue(
+        [],
+        [
+          {
+            data: {
+              viewer: {},
+            },
+          },
+        ],
+      ),
+    );
+
+    await expect(client.getAuthenticatedLogin()).rejects.toThrow(
+      "GitHub GraphQL response did not include viewer.login.",
+    );
   });
 
   it("throws GitHubApiError on failed API responses", async () => {
@@ -459,5 +677,15 @@ function responseQueue(
         "Content-Type": "application/json",
       },
     });
+  };
+}
+
+function viewerLoginPayload(login: string) {
+  return {
+    data: {
+      viewer: {
+        login,
+      },
+    },
   };
 }

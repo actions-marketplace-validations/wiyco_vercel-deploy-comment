@@ -18,8 +18,12 @@ inputs:
     description: "Either deploy-and-comment or comment-only."
     required: false
     default: "deploy-and-comment"
+  deployment-concurrency:
+    description: "Maximum number of deploy-and-comment entries to execute at once."
+    required: false
+    default: "2"
   deployments:
-    description: "JSON array describing one or more project-driven deployments. deploy-and-comment entries require cwd, projectId, orgId, environment, and an absolute https projectUrl. comment-only entries require projectId, environment, an absolute https projectUrl, and an absolute https deploymentUrl."
+    description: "JSON array describing one or more project-driven deployments. deploy-and-comment entries require cwd, projectId, orgId, environment, and an absolute https projectUrl, and may include an absolute https deploymentUrl. comment-only entries require projectId, environment, an absolute https projectUrl, and an absolute https deploymentUrl, and may include status: ready|failed|cancelled|skipped|in_progress."
     required: true
   header:
     description: "Markdown heading text for the pull request comment."
@@ -33,13 +37,17 @@ inputs:
     required: false
     default: "default"
   status:
-    description: "Fallback GitHub Actions status when Vercel deployment details are unavailable."
+    description: "Fallback GitHub Actions status when Vercel deployment details are unavailable. In comment-only mode, an explicit deployments[].status overrides this value per deployment."
     required: false
     default: "success"
   comment-on-failure:
     description: "Whether deploy failures should still update the pull request comment before failing the action."
     required: false
     default: "true"
+  job-status:
+    description: "Internal GitHub Actions job status used by the post-execution cleanup."
+    required: false
+    default: ${{ job.status }}
 
 outputs:
   comment-id:
@@ -47,10 +55,12 @@ outputs:
   comment-url:
     description: "URL of the created or updated pull request comment."
   deployment-urls:
-    description: "JSON array of preview deployment URLs included in the comment."
+    description: "JSON array of preview deployment URLs produced for the current deployments input, in input order with rows that have URLs."
   statuses:
-    description: "JSON array of normalized status keys included in the comment."
+    description: "JSON array of normalized status keys produced for the current deployments input, in input order."
 
 runs:
   using: node24
   main: dist/index.js
+  post: dist/index.js
+  post-if: job.status != 'success'
