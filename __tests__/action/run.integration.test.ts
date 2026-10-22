@@ -244,7 +244,7 @@ describe("runActionMain", () => {
       "failed to flush managed pull request comment updates: final comment write failed",
     );
     expect(aggregateErrors[1]?.cause).toBeInstanceOf(Error);
-    expect((aggregateErrors[1]?.cause as Error).message).toBe(
+    expect((aggregateErrors[1]?.cause as Error | undefined)?.message).toBe(
       "final comment write failed",
     );
   });

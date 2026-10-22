@@ -33,19 +33,22 @@ describe("resolveDisplayStatus", () => {
       "⏳",
       "In Progress",
     ],
-  ] as const)("prefers explicit deployment status %s", (deploymentStatus, key, emoji, label) => {
-    expect(
-      resolveDisplayStatus({
-        deploymentStatus,
-        vercelReadyState: "READY",
-        actionStatus: "failure",
-      }),
-    ).toEqual({
-      key,
-      emoji,
-      label,
-    });
-  });
+  ] as const)(
+    "prefers explicit deployment status %s",
+    (deploymentStatus, key, emoji, label) => {
+      expect(
+        resolveDisplayStatus({
+          deploymentStatus,
+          vercelReadyState: "READY",
+          actionStatus: "failure",
+        }),
+      ).toEqual({
+        key,
+        emoji,
+        label,
+      });
+    },
+  );
 
   it.each([
     [
@@ -116,17 +119,20 @@ describe("resolveDisplayStatus", () => {
       "⏭️",
       "Skipped",
     ],
-  ] as const)("falls back to action status %s", (actionStatus, key, emoji, label) => {
-    expect(
-      resolveDisplayStatus({
-        actionStatus,
-      }),
-    ).toEqual({
-      key,
-      emoji,
-      label,
-    });
-  });
+  ] as const)(
+    "falls back to action status %s",
+    (actionStatus, key, emoji, label) => {
+      expect(
+        resolveDisplayStatus({
+          actionStatus,
+        }),
+      ).toEqual({
+        key,
+        emoji,
+        label,
+      });
+    },
+  );
 
   it("returns unknown for unrecognized Vercel states", () => {
     expect(
