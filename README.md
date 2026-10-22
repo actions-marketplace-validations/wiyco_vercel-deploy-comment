@@ -202,6 +202,12 @@ Pass `vercel-token` in `comment-only` mode when you want Vercel API enrichment f
 | `deployment-urls` | JSON array of preview deployment URLs produced for the current `deployments` input, in input order with rows that resolved a preview URL. |
 | `statuses` | JSON array of normalized status keys produced for the current `deployments` input, in input order. Current values are `ready`, `failed`, `cancelled`, `skipped`, `in_progress`, and `unknown`. |
 
+## Development
+
+Use the Node.js version in `.node-version` and pnpm version in `package.json`.
+
+For VS Code, install the recommended [TypeScript 7 extension](https://marketplace.visualstudio.com/items?itemName=TypeScriptTeam.native-preview). The workspace settings enable its native language service and use the locally installed TypeScript package.
+
 ## Notes
 
 - The action stores one hidden comment marker for the whole comment and one hidden marker per row. Row updates are scoped to `projectId + environment`.
