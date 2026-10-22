@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 2026-04-19
+Last updated: 2026-10-22
 
 ## Overview
 
@@ -15,7 +15,8 @@ The Action reads the inputs supplied by your workflow, including:
 - `github-token`
 - `vercel-token`, when provided
 - `mode`
-- `deployments`, including project URLs, project names, deployment URLs, team IDs, team slugs, working directories, and custom deploy commands
+- `deployments`, including project and organization IDs, environments, project URLs, display names, deployment URLs, team IDs, team slugs, and working directories
+- `deployment-concurrency`
 - `header`, `footer`, `comment-marker`, `status`, and `comment-on-failure`
 
 ### GitHub Data
@@ -33,12 +34,12 @@ The Action reads GitHub runtime context and GitHub API data needed to find and u
 When deployment or enrichment is enabled, the Action may process:
 
 - Deployment URLs produced by the Vercel CLI or supplied in `deployments`
-- Vercel Deployment API metadata, such as deployment URL, deployment name, ready state, creation timestamp, project ID, and project name
+- Vercel Project and Deployment API metadata, such as deployment URL, deployment name, ready state, creation timestamp, project ID, and project name
 - Optional Vercel team ID or team slug supplied by the workflow
 
 ### Deployment Content
 
-The Action itself does not parse or store your application source code. However, in `deploy-and-comment` mode the default command runs `vercel deploy --prebuilt`, which may upload deployment output from the configured working directory to Vercel. Custom deploy commands may send additional data depending on how you configure them.
+In `deploy-and-comment` mode, the Action copies the configured source directory into an isolated temporary workspace on the runner, excluding repo-local `.git` and `.vercel` directories. It writes project settings and runs `vercel pull`, `vercel build`, and `vercel deploy --prebuilt` in that workspace. The build executes project code, and the deploy uploads the prebuilt output to Vercel. The Action removes the temporary workspace when deployment finishes or fails.
 
 ## How Data Is Processed
 
@@ -48,7 +49,7 @@ The Action:
 
 - Uses the GitHub REST API to identify the authenticated user, list pull request comments, and create or update one pull request comment
 - Runs the Vercel CLI in `deploy-and-comment` mode
-- Uses the Vercel Deployment API to enrich deployment status when `vercel-token` and a deployment URL are available
+- Uses the Vercel Project and Deployment APIs to enrich project names and deployment status when `vercel-token` is available
 - Renders a Markdown pull request comment containing deployment status and links
 - Sets GitHub Actions outputs for the comment ID, comment URL, deployment URLs, and status keys
 
@@ -59,6 +60,7 @@ The maintainers of this Action do not operate an external server, database, anal
 | Location | Scope | Retention |
 | --- | --- | --- |
 | Runner memory | Single workflow job | Released when the job ends |
+| Temporary runner workspace | Copied source files, project settings, and build output for each deployment | Removed when deployment finishes or fails; runner cleanup governs files left by an interrupted process |
 | Workflow logs | GitHub Actions workflow run | Retained according to the repository's GitHub Actions log retention settings |
 | GitHub Actions outputs | Workflow run and downstream workflow steps | Retained with the workflow run |
 | Pull request comment | Repository pull request or issue | Persists until edited or deleted by a user or automation with sufficient permissions |
@@ -85,17 +87,17 @@ Pull request comments are visible according to the repository's visibility and p
 
 The GitHub token supplied through `github-token` is used only for authenticated requests to the GitHub API.
 
-The Vercel token supplied through `vercel-token` is used only for Vercel CLI deployment and Vercel Deployment API requests. For the default Vercel command, the token is passed to the CLI as a token argument.
+The Vercel token supplied through `vercel-token` is used for authenticated Vercel CLI steps and Vercel Project and Deployment API requests. The Action passes it to `vercel pull` and `vercel deploy` through the `VERCEL_TOKEN` environment variable. It removes `VERCEL_TOKEN` and GitHub Actions `INPUT_*` variables from the `vercel build` environment.
 
 Both tokens are registered with `@actions/core.setSecret` so GitHub Actions can mask exact token values in logs. The Action does not intentionally write tokens to pull request comments, outputs, artifacts, or files.
 
-Custom commands and other workflow steps can still print or transmit secrets if configured to do so. Treat workflow configuration as trusted code and avoid placing secrets in `header`, `footer`, `deployments`, or other values that may be rendered into comments or logs.
+Project build scripts and other workflow steps can still print or transmit secrets exported through other environment variables. Treat workflow configuration and project code as trusted code and avoid placing secrets in `header`, `footer`, `deployments`, or other values that may be rendered into comments or logs.
 
 ## Data Minimization
 
 - The Action reads the GitHub event payload only to identify the pull request or issue number.
 - Existing comment bodies are inspected only to find the hidden marker for this Action's prior comment.
-- Vercel metadata is requested only when a Vercel token and deployment URL are available.
+- Vercel metadata is requested only when a Vercel token is available and the deployment entry identifies a project or deployment.
 - No telemetry or analytics data is collected by the Action maintainers.
 - No reports or artifacts are created by this Action unless your workflow creates them separately.
 
@@ -107,9 +109,9 @@ This Action requires GitHub-operated services and may require Vercel-operated se
 - GitHub REST API
 - GitHub pull request comments
 - Vercel CLI
-- Vercel Deployment API
+- Vercel Project and Deployment APIs
 
-Use of GitHub and Vercel is governed by their respective terms and privacy policies. If you configure a custom deploy command, that command may contact additional services outside the control of this Action.
+Use of GitHub and Vercel is governed by their respective terms and privacy policies. Project build scripts and other workflow steps may contact additional services outside the control of this Action.
 
 ## Your Controls
 

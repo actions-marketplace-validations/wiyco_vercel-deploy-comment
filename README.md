@@ -41,7 +41,7 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: npm install --global vercel@latest
-      - uses: wiyco/vercel-deploy-comment@v2 # or pin to a specific commit SHA
+      - uses: wiyco/vercel-deploy-comment@v3 # or pin to a specific commit SHA
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           deployments: |
@@ -160,7 +160,7 @@ Top-level inputs:
 Use this form when you already know the `deploymentUrl` and final `status` and do not need Vercel API enrichment:
 
 ```yaml
-- uses: wiyco/vercel-deploy-comment@v2
+- uses: wiyco/vercel-deploy-comment@v3
   with:
     mode: comment-only
     deployments: |
@@ -178,7 +178,7 @@ Use this form when you already know the `deploymentUrl` and final `status` and d
 Pass `vercel-token` in `comment-only` mode when you want Vercel API enrichment for the project name or deployment status:
 
 ```yaml
-- uses: wiyco/vercel-deploy-comment@v2
+- uses: wiyco/vercel-deploy-comment@v3
   with:
     mode: comment-only
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
