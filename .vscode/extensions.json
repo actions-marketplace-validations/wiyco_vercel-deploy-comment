@@ -1,5 +1,6 @@
 {
   "recommendations": [
+    "TypeScriptTeam.native-preview",
     "biomejs.biome",
     "streetsidesoftware.code-spell-checker"
   ]

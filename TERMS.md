@@ -1,6 +1,6 @@
 # Terms of Service
 
-Last updated: 2026-04-19
+Last updated: 2026-10-22
 
 ## 1. Acceptance
 
@@ -18,7 +18,7 @@ Use of the source code is governed by the [MIT License](LICENSE) included in thi
 
 If you obtain or use the Action through GitHub Marketplace, your use of GitHub Marketplace is also governed by GitHub's Marketplace terms and other applicable GitHub terms.
 
-The Action depends on GitHub Actions and GitHub APIs, and may depend on the Vercel CLI and Vercel APIs. Your use of those services is governed by the terms, policies, limits, and billing rules of GitHub, Vercel, and any other service contacted by your workflow or custom deploy command.
+The Action depends on GitHub Actions and GitHub APIs, and may depend on the Vercel CLI and Vercel APIs. Your use of those services is governed by the terms, policies, limits, and billing rules of GitHub, Vercel, and any other service contacted by your workflow or project build scripts.
 
 ## 5. User Responsibilities
 
@@ -27,8 +27,8 @@ You are responsible for:
 - Ensuring you have the necessary rights to access the repository data and Vercel projects used by the workflow
 - Managing GitHub token permissions and Vercel token scope
 - Protecting secrets and deployment URLs
-- Reviewing workflow configuration before exposing secrets to pull requests, forks, or custom commands
-- Ensuring `deployments[].command` and `deployments[].cwd` are trusted and appropriate for the runner environment
+- Reviewing workflow configuration and project build scripts before exposing secrets to pull requests or forks
+- Ensuring the source directory selected by `deployments[].cwd` is trusted and appropriate for the runner environment
 - Complying with all laws, policies, and third-party terms that apply to your repository, workflow, deployment content, and Vercel account
 
 ## 6. Data Processing
@@ -40,7 +40,7 @@ By using the Action, you acknowledge that:
 - It reads GitHub repository context, pull request or issue numbers, authenticated user login, and existing pull request comments to create or update the Action's comment.
 - It may send deployment data and deployment output to Vercel when deployment or Vercel API enrichment is configured.
 - Pull request comments created by the Action may expose project names, project links, preview deployment links, workflow run links, timestamps, and any Markdown footer you configure.
-- Custom deploy commands may process or transmit additional data according to your workflow configuration.
+- Project build scripts may process or transmit additional data according to your project and workflow configuration.
 
 For full details, see the [Privacy Policy](PRIVACY.md).
 
@@ -64,7 +64,7 @@ TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE AUTHORS, MAINTAINE
 
 ## 11. Security
 
-You are responsible for choosing appropriate token scopes, repository permissions, runner environments, and workflow triggers. The Action includes token masking and comment-rendering safeguards, but it cannot protect secrets or systems exposed by your workflow configuration, custom commands, Vercel settings, or other workflow steps.
+You are responsible for choosing appropriate token scopes, repository permissions, runner environments, and workflow triggers. The Action includes token masking and comment-rendering safeguards, but it cannot protect secrets or systems exposed by your workflow configuration, project build scripts, Vercel settings, or other workflow steps.
 
 For vulnerability reporting and recommended hardening steps, see [SECURITY.md](SECURITY.md).
 

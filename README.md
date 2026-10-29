@@ -34,14 +34,14 @@ jobs:
   preview:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v5
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: npm install --global vercel@latest
-      - uses: wiyco/vercel-deploy-comment@v2 # or pin to a specific commit SHA
+      - uses: wiyco/vercel-deploy-comment@v3 # or pin to a specific commit SHA
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           deployments: |
@@ -160,7 +160,7 @@ Top-level inputs:
 Use this form when you already know the `deploymentUrl` and final `status` and do not need Vercel API enrichment:
 
 ```yaml
-- uses: wiyco/vercel-deploy-comment@v2
+- uses: wiyco/vercel-deploy-comment@v3
   with:
     mode: comment-only
     deployments: |
@@ -178,7 +178,7 @@ Use this form when you already know the `deploymentUrl` and final `status` and d
 Pass `vercel-token` in `comment-only` mode when you want Vercel API enrichment for the project name or deployment status:
 
 ```yaml
-- uses: wiyco/vercel-deploy-comment@v2
+- uses: wiyco/vercel-deploy-comment@v3
   with:
     mode: comment-only
     vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -201,6 +201,12 @@ Pass `vercel-token` in `comment-only` mode when you want Vercel API enrichment f
 | `comment-url` | URL of the created or updated pull request comment. |
 | `deployment-urls` | JSON array of preview deployment URLs produced for the current `deployments` input, in input order with rows that resolved a preview URL. |
 | `statuses` | JSON array of normalized status keys produced for the current `deployments` input, in input order. Current values are `ready`, `failed`, `cancelled`, `skipped`, `in_progress`, and `unknown`. |
+
+## Development
+
+Use the Node.js version in `.node-version` and pnpm version in `package.json`.
+
+For VS Code, install the recommended [TypeScript 7 extension](https://marketplace.visualstudio.com/items?itemName=TypeScriptTeam.native-preview). The workspace settings enable its native language service and use the locally installed TypeScript package.
 
 ## Notes
 

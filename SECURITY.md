@@ -4,8 +4,9 @@
 
 | Version | Supported |
 | ------- | --------- |
-| v1.x    | ✅        |
-| v2.x    | ✅        |
+| v1.x    | ❌        |
+| v2.x    | ❌        |
+| v3.x    | ✅        |
 
 Only the latest supported major release line receives security fixes.
 
@@ -42,7 +43,7 @@ Security concerns include, but are not limited to:
 
 - GitHub token and Vercel token handling or exposure
 - Exposure of private preview URLs, Vercel dashboard URLs, deployment metadata, or workflow run URLs
-- Command execution risks from `deployments[].command` and `deployments[].cwd`
+- Vercel CLI execution and project build scripts in the working directory selected by `deployments[].cwd`
 - Markdown or URL injection in generated pull request comments
 - Abuse of the hidden comment marker used to find the existing action comment
 - GitHub Actions output injection or log injection
@@ -51,8 +52,8 @@ Security concerns include, but are not limited to:
 
 ## Security Model
 
-- The default deploy command is executed through `@actions/exec` as an argument vector, not through a shell.
-- A custom `deployments[].command` is still executable workflow configuration. Treat it as trusted code and do not build it from untrusted pull request input.
+- The action runs fixed Vercel CLI commands through `@actions/exec` as argument vectors, without a shell.
+- `vercel build` executes project-controlled build scripts. Treat the source directory selected by `deployments[].cwd` as trusted code before exposing workflow secrets to it.
 - `github-token` and `vercel-token` are registered with `@actions/core.setSecret`.
 - Vercel CLI child processes receive an explicit environment with GitHub Actions `INPUT_*` variables removed, and `VERCEL_TOKEN` is added back only for authenticated Vercel steps.
 - Other workflow-managed secrets remain in scope when the workflow exports them through non-`INPUT_*` environment variables. This action does not attempt to scrub arbitrary caller-provided environment variables.
@@ -77,7 +78,7 @@ Security concerns include, but are not limited to:
 The following are outside this project's vulnerability response scope:
 
 - Vulnerabilities in GitHub, GitHub Actions, Vercel, or the Vercel CLI
-- Secrets printed by user-defined custom commands or other workflow steps
+- Secrets printed by project build scripts or other workflow steps
 - Misconfigured repository permissions, branch protection, environments, or Vercel project settings
 - Vulnerabilities in the application being deployed
 

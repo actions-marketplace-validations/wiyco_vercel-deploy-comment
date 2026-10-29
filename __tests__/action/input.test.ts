@@ -172,20 +172,23 @@ describe("parseActionInputs", () => {
       },
       "deployments[0].environment must be a string",
     ],
-  ])("rejects non-string %s values in deploy-and-comment deployments", (_field, overrides, message) => {
-    expect(() =>
-      parseActionInputs(
-        validRawInputs({
-          deployments: JSON.stringify([
-            {
-              ...validDeployAndCommentDeployment,
-              ...overrides,
-            },
-          ]),
-        }),
-      ),
-    ).toThrow(message);
-  });
+  ])(
+    "rejects non-string %s values in deploy-and-comment deployments",
+    (_field, overrides, message) => {
+      expect(() =>
+        parseActionInputs(
+          validRawInputs({
+            deployments: JSON.stringify([
+              {
+                ...validDeployAndCommentDeployment,
+                ...overrides,
+              },
+            ]),
+          }),
+        ),
+      ).toThrow(message);
+    },
+  );
 
   it("accepts an optional deploymentUrl in deploy-and-comment mode", () => {
     const inputs = parseActionInputs(
